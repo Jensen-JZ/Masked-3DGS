@@ -1,4 +1,4 @@
-name: gaussian_splatting
+name: masked_gs
 channels:
   - pytorch
   - conda-forge

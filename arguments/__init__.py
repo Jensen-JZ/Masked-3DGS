@@ -50,6 +50,7 @@ class ModelParams(ParamGroup):
         self._source_path = ""
         self._model_path = ""
         self._images = "images"
+        self.masks = ""
         self._depths = ""
         self._resolution = -1
         self._white_background = False
@@ -61,6 +62,8 @@ class ModelParams(ParamGroup):
     def extract(self, args):
         g = super().extract(args)
         g.source_path = os.path.abspath(g.source_path)
+        if hasattr(g, "masks") and g.masks:
+            g.masks = g.masks if os.path.isabs(g.masks) else os.path.abspath(os.path.join(g.source_path, g.masks))
         return g
 
 class PipelineParams(ParamGroup):
@@ -88,6 +91,7 @@ class OptimizationParams(ParamGroup):
         self.exposure_lr_delay_mult = 0.0
         self.percent_dense = 0.01
         self.lambda_dssim = 0.2
+        self.lambda_alpha = 0.0
         self.densification_interval = 100
         self.opacity_reset_interval = 3000
         self.densify_from_iter = 500

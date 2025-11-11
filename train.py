@@ -35,7 +35,7 @@ except:
     FUSED_SSIM_AVAILABLE = False
 
 try:
-    from diff_gaussian_rasterization import SparseGaussianAdam
+    from diff_gauss import SparseGaussianAdam
     SPARSE_ADAM_AVAILABLE = True
 except:
     SPARSE_ADAM_AVAILABLE = False
@@ -109,21 +109,31 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
         render_pkg = render(viewpoint_cam, gaussians, pipe, bg, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE)
-        image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-
-        if viewpoint_cam.alpha_mask is not None:
-            alpha_mask = viewpoint_cam.alpha_mask.cuda()
-            image *= alpha_mask
+        image = render_pkg["render"]
+        viewspace_point_tensor = render_pkg["viewspace_points"]
+        visibility_filter = render_pkg["visibility_filter"]
+        radii = render_pkg["radii"]
+        rendered_alpha = render_pkg["alpha"]
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
-        Ll1 = l1_loss(image, gt_image)
-        if FUSED_SSIM_AVAILABLE:
-            ssim_value = fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0))
-        else:
-            ssim_value = ssim(image, gt_image)
+        mask = viewpoint_cam.alpha_mask.cuda() if viewpoint_cam.alpha_mask is not None else None
+        masked_image = image * mask if mask is not None else image
+        masked_gt_image = gt_image * mask if mask is not None else gt_image
 
-        loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
+        loss = torch.zeros([], device=image.device)
+        if mask is not None and opt.lambda_alpha > 0:
+            alpha_loss = torch.nn.functional.mse_loss(rendered_alpha, mask)
+            loss = loss + opt.lambda_alpha * alpha_loss
+
+        Ll1 = l1_loss(masked_image, masked_gt_image)
+        if FUSED_SSIM_AVAILABLE:
+            ssim_value = fused_ssim(masked_image.unsqueeze(0), masked_gt_image.unsqueeze(0))
+        else:
+            ssim_value = ssim(masked_image, masked_gt_image)
+
+        rgb_loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
+        loss = loss + rgb_loss
 
         # Depth regularization
         Ll1depth_pure = 0.0

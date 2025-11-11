@@ -11,7 +11,7 @@
 
 import torch
 import math
-from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
+from diff_gauss import GaussianRasterizationSettings, GaussianRasterizer
 from scene.gaussian_model import GaussianModel
 from utils.sh_utils import eval_sh
 
@@ -46,7 +46,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
         campos=viewpoint_camera.camera_center,
         prefiltered=False,
         debug=pipe.debug,
-        antialiasing=pipe.antialiasing
+        # antialiasing=pipe.antialiasing
     )
 
     rasterizer = GaussianRasterizer(raster_settings=raster_settings)
@@ -88,7 +88,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
 
     # Rasterize visible Gaussians to image, obtain their radii (on screen). 
     if separate_sh:
-        rendered_image, radii, depth_image = rasterizer(
+        rendered_image, depth_image, rendered_normals, rendered_alpha, radii, extra_attrs = rasterizer(
             means3D = means3D,
             means2D = means2D,
             dc = dc,
@@ -97,9 +97,9 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             opacities = opacity,
             scales = scales,
             rotations = rotations,
-            cov3D_precomp = cov3D_precomp)
+            cov3Ds_precomp = cov3D_precomp)
     else:
-        rendered_image, radii, depth_image = rasterizer(
+        rendered_image, depth_image, rendered_normals, rendered_alpha, radii, extra_attrs = rasterizer(
             means3D = means3D,
             means2D = means2D,
             shs = shs,
@@ -107,7 +107,7 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
             opacities = opacity,
             scales = scales,
             rotations = rotations,
-            cov3D_precomp = cov3D_precomp)
+            cov3Ds_precomp = cov3D_precomp)
         
     # Apply exposure to rendered image (training only)
     if use_trained_exp:
@@ -117,12 +117,18 @@ def render(viewpoint_camera, pc : GaussianModel, pipe, bg_color : torch.Tensor, 
     # Those Gaussians that were frustum culled or had a radius of 0 were not visible.
     # They will be excluded from value updates used in the splitting criteria.
     rendered_image = rendered_image.clamp(0, 1)
+    if rendered_alpha.ndim == 2:
+        rendered_alpha = rendered_alpha.unsqueeze(0)
+
     out = {
         "render": rendered_image,
         "viewspace_points": screenspace_points,
         "visibility_filter" : (radii > 0).nonzero(),
         "radii": radii,
-        "depth" : depth_image
-        }
+        "depth" : depth_image,
+        "normal": rendered_normals if rendered_normals.numel() > 0 else None,
+        "extra": extra_attrs if extra_attrs.numel() > 0 else None,
+        "alpha": rendered_alpha
+    }
     
     return out

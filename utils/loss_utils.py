@@ -14,7 +14,7 @@ import torch.nn.functional as F
 from torch.autograd import Variable
 from math import exp
 try:
-    from diff_gaussian_rasterization._C import fusedssim, fusedssim_backward
+    from diff_gauss._C import fusedssim, fusedssim_backward
 except:
     pass
 
@@ -24,6 +24,8 @@ C2 = 0.03 ** 2
 class FusedSSIMMap(torch.autograd.Function):
     @staticmethod
     def forward(ctx, C1, C2, img1, img2):
+        if fusedssim is None:
+            raise RuntimeError("fused SSIM extension is unavailable; ensure diff_gaussian_rasterization/diff_gauss is installed")
         ssim_map = fusedssim(C1, C2, img1, img2)
         ctx.save_for_backward(img1.detach(), img2)
         ctx.C1 = C1
@@ -32,6 +34,8 @@ class FusedSSIMMap(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, opt_grad):
+        if fusedssim_backward is None:
+            raise RuntimeError("fused SSIM extension is unavailable; ensure diff_gaussian_rasterization/diff_gauss is installed")
         img1, img2 = ctx.saved_tensors
         C1, C2 = ctx.C1, ctx.C2
         grad = fusedssim_backward(C1, C2, img1, img2, opt_grad)
