@@ -128,6 +128,15 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             alpha_loss = torch.nn.functional.mse_loss(rendered_alpha, mask)
             loss = loss + opt.lambda_alpha * alpha_loss
 
+        # Outside mask loss
+        if mask is not None and opt.lambda_mask_outside > 0:
+            outside_mask = (1.0 - mask).clamp(min=0.0, max=1.0)
+            bg_target = bg.view(-1, 1, 1) if bg.ndim == 1 else bg
+            outside_rgb = torch.abs((image - bg_target) * outside_mask).mean()
+            outside_alpha = torch.abs(rendered_alpha * outside_mask).mean()
+            outside_penalty = opt.lambda_mask_outside * (outside_rgb + outside_alpha)
+            loss = loss + outside_penalty
+
         Ll1 = l1_loss(masked_image, masked_gt_image)
         if FUSED_SSIM_AVAILABLE:
             ssim_value = fused_ssim(masked_image.unsqueeze(0), masked_gt_image.unsqueeze(0))
@@ -140,11 +149,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Depth regularization
         Ll1depth_pure = 0.0
         if depth_l1_weight(iteration) > 0 and viewpoint_cam.depth_reliable:
-            invDepth = render_pkg["depth"]
+            invDepth = render_pkg["depth"]  # Maybe delete later
+            # render_depth = render_pkg["depth"]
+            # if render_depth.ndim == 2:
+            #     render_depth = render_depth.unsqueeze(0)
+
+            # inv_depth = torch.zeros_like(render_depth)
+            # valid_depth = render_depth > 1e-6
+            # inv_depth[valid_depth] = torch.reciprocal(torch.clamp(render_depth[valid_depth], min=1e-6))
+
             mono_invdepth = viewpoint_cam.invdepthmap.cuda()
             depth_mask = viewpoint_cam.depth_mask.cuda()
 
-            Ll1depth_pure = torch.abs((invDepth  - mono_invdepth) * depth_mask).mean()
+            Ll1depth_pure = torch.abs((invDepth - mono_invdepth) * depth_mask).mean()
             Ll1depth = depth_l1_weight(iteration) * Ll1depth_pure 
             loss += Ll1depth
             Ll1depth = Ll1depth.item()
