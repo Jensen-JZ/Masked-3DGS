@@ -6,7 +6,7 @@ This is achieved through three key modifications to the original codebase:
 
 1.  **Modified CUDA Rasterizer**: We've replaced the original rasterizer with a version that outputs the alpha channel (transparency) of the rendered image. This is crucial for comparing the model's output against the input masks during training.
 2.  **Mask Data Pipeline**: A new data loading pipeline has been introduced. By using the `--masks <path_to_masks>` command-line argument, you can now provide a directory of binary masks that correspond to your input images. The system will automatically load and utilize these masks during the training process.
-3.  **Alpha Loss Function**: We have incorporated a new loss term, controlled by the hyperparameter `--lambda_alpha`. This loss function penalizes any reconstruction occurring outside the masked areas by encouraging the alpha values in the "ignore" regions of the rendered output to be zero.
+3.  **Hybrid Loss Function**: We have incorporated a new hybrid loss term, controlled by the hyperparameter `--lambda_mask`. This loss is a blend of two distinct components: an **Alpha Loss**, which ensures that the alpha channel is zero outside the masked region, and an **Outside Mask Loss**, which penalizes the RGB values of any rendered content appearing outside the designated area.
 
 ---
 
@@ -56,9 +56,9 @@ A standard file structure should look like this:
 ```
 
 ### 4. Run Training
-Start the training process by pointing to your dataset and the newly created masks directory. Adjust `--lambda_alpha` as needed.
+Start the training process by pointing to your dataset and the newly created masks directory. Adjust `--lambda_mask` as needed.
 ```bash
-python train.py -s <path_to_colmap_dataset> --masks <path_to_mask_directory> --lambda_alpha 0.1
+python train.py -s <path_to_colmap_dataset> --masks <path_to_mask_directory> --lambda_mask 0.1
 ```
 
 ---
@@ -70,7 +70,7 @@ To train a 3DGS model using masks, you first need to prepare a directory contain
 Then, you can run the training script with the following new arguments:
 
 ```bash
-python train.py -s <path_to_colmap_dataset> --masks <path_to_mask_directory> --lambda_alpha 0.1
+python train.py -s <path_to_colmap_dataset> --masks <path_to_mask_directory> --lambda_mask 0.1
 ```
 
 ---
@@ -81,13 +81,13 @@ python train.py -s <path_to_colmap_dataset> --masks <path_to_mask_directory> --l
 -   **Usage**: `--masks <path>`
 -   **Description**: Specifies the path to the directory containing the mask images. The pipeline will automatically search this directory for mask files that match the names of the input images.
 
-### `--lambda_alpha`
--   **Usage**: `--lambda_alpha <weight>`
--   **Description**: This is a critical hyperparameter that controls the weight of the alpha loss. The choice of this value directly influences how strictly the model adheres to the provided masks. Finding the right value often requires some experimentation based on your specific scene and goals.
+### `--lambda_mask`
+-   **Usage**: `--lambda_mask <weight>`
+-   **Description**: This crucial hyperparameter adjusts the strength of the hybrid mask loss. It directly impacts how strictly the model conforms to the provided masks. The optimal value can vary depending on your scene and specific objectives.
 -   **Value Ranges and Their Effects**:
-    -   **Low Values (e.g., 0.01 - 0.1)**: This provides a gentle constraint. It's useful when you want a softer transition at the mask edges or need to preserve delicate, semi-transparent structures. However, it may not be strong enough to eliminate all "floaters" or unwanted artifacts outside the masked region.
-    -   **Medium Values (e.g., 0.1 - 1.0)**: This range typically offers a good balance between quality and mask adherence. It is a strong constraint that is effective at removing most floaters and noise outside the region of interest while generally maintaining good reconstruction quality at the boundaries. A value of `0.1` is a recommended starting point.
-    -   **High Values (e.g., > 1.0)**: This imposes a very strict constraint. It will aggressively force the reconstruction to be confined within the mask. While effective, this can sometimes lead to overly sharp or unnatural-looking edges at the mask boundaries, and may even degrade the quality of the reconstruction if the constraint is too harsh.
+    -   **Low Values (e.g., 0.01 - 0.1)**: Offers a mild constraint, ideal for preserving soft edges or semi-transparent details. May not be sufficient to remove all artifacts outside the mask.
+    -   **Medium Values (e.g., 0.1 - 1.0)**: Strikes a good balance between mask fidelity and reconstruction quality. This range is effective at eliminating most external noise while maintaining sharp boundaries. A starting value of `0.1` is recommended.
+    -   **High Values (e.g., > 1.0)**: Enforces a strict constraint, aggressively confining the reconstruction to the mask. Can sometimes result in overly sharp or artificial-looking edges.
 
 ---
 
@@ -115,7 +115,7 @@ This work is built upon the incredible research and open-source code of the orig
 
 1.  **修改版 CUDA 光栅化器**：我们替换了原始的光栅化器。新版本能够输出渲染图像的 alpha 通道（透明度信息），这对于在训练过程中将模型渲染结果与输入蒙版进行比较至关重要。
 2.  **蒙版数据通路**：我们引入了新的数据加载流程。通过使用 `--masks <蒙版路径>` 命令行参数，您现在可以提供一个与输入图像相对应的二进制蒙版目录。系统会自动加载这些蒙版，并在训练过程中使用它们。
-3.  **Alpha 损失函数**：我们增加了一个新的损失项，由超参数 `--lambda_alpha` 控制。该损失函数会惩罚在蒙版区域之外进行重建的行为。具体来说，它会促使渲染结果中对应于蒙版“忽略”区域的 alpha 值为零。
+3.  **混合损失函数**：我们引入了一个新的混合损失项，由超参数 `--lambda_mask` 控制。该损失函数融合了两个不同的部分：**Alpha 损失**，确保蒙版外的 alpha 通道值为零；以及 **蒙版外损失**，用于惩罚在指定区域外渲染出的任何内容的 RGB 值。
 
 ---
 
@@ -165,9 +165,9 @@ conda activate masked_gs
 ```
 
 ### 4. 运行训练
-启动训练时，请指定您的数据集路径和新建的蒙版目录路径，并根据需要调整 `--lambda_alpha` 的值。
+启动训练时，请指定您的数据集路径和新建的蒙版目录路径，并根据需要调整 `--lambda_mask` 的值。
 ```bash
-python train.py -s <COLMAP 数据集路径> --masks <蒙版目录路径> --lambda_alpha 0.1
+python train.py -s <COLMAP 数据集路径> --masks <蒙版目录路径> --lambda_mask 0.1
 ```
 
 ---
@@ -179,7 +179,7 @@ python train.py -s <COLMAP 数据集路径> --masks <蒙版目录路径> --lambd
 然后，您可以使用以下新增的参数来运行训练脚本：
 
 ```bash
-python train.py -s <COLMAP 数据集路径> --masks <蒙版目录路径> --lambda_alpha 0.1
+python train.py -s <COLMAP 数据集路径> --masks <蒙版目录路径> --lambda_mask 0.1
 ```
 
 ---
@@ -190,13 +190,13 @@ python train.py -s <COLMAP 数据集路径> --masks <蒙版目录路径> --lambd
 -   **用法**: `--masks <路径>`
 -   **说明**: 指定包含蒙版图像的目录路径。数据加载器会自动在此目录中查找与输入图像同名的蒙版文件。
 
-### `--lambda_alpha`
--   **用法**: `--lambda_alpha <权重值>`
--   **说明**: 这是一个关键的超参数，用于控制 alpha 损失的权重。该值的选择直接影响模型对蒙版约束的严格程度。根据您的具体场景和目标，找到最佳值通常需要一些实验。
+### `--lambda_mask`
+-   **用法**: `--lambda_mask <权重值>`
+-   **说明**: 这是一个关键的超参数，用于调整混合蒙版损失的强度。它直接影响模型对所提供蒙版的遵循严格程度。最佳值可能因您的场景和具体目标而异。
 -   **不同取值范围及其效果**:
-    -   **较低的值 (例如 0.01 - 0.1)**: 提供一个温和的约束。当您希望在蒙版边缘有更平滑的过渡，或者需要保留精细的半透明结构时，这个范围会很有用。但它可能不足以完全消除蒙版外的所有“浮游物”或伪影。
-    -   **中等的值 (例如 0.1 - 1.0)**: 通常能提供一个在质量和蒙版遵循度之间的良好平衡。这是一个强约束，能有效去除感兴趣区域外的大部分浮游物和噪声，同时在边界处保持较好的重建质量。我们推荐从 `0.1` 开始尝试。
-    -   **较高的的值 (例如 > 1.0)**: 施加一个非常严格的约束。它会极力地将重建限制在蒙版内部。虽然效果显著，但这有时可能导致蒙版边界出现过于生硬、不自然的截断，如果约束过强甚至可能损害重建质量。
+    -   **较低的值 (例如 0.01 - 0.1)**: 提供一个温和的约束，非常适合保留柔和的边缘或半透明细节。可能不足以移除蒙版外的所有伪影。
+    -   **中等的值 (例如 0.1 - 1.0)**: 在蒙版保真度和重建质量之间取得了良好的平衡。这个范围能有效消除大部分外部噪声，同时保持清晰的边界。建议从 `0.1` 开始。
+    -   **较高的的值 (例如 > 1.0)**: 强制执行严格的约束，积极地将重建限制在蒙版内。有时可能导致边缘过于锐利或看起来不自然。
 
 ---
 
