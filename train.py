@@ -11,6 +11,7 @@
 
 import os
 import torch
+from pathlib import Path
 from random import randint
 from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
@@ -22,6 +23,7 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+from utils.add_shadow_gaussians import add_shadow_gaussians_to_ply
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -169,6 +171,23 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
+                if dataset.shadow:
+                    iteration_dir = Path(scene.model_path) / "point_cloud" / f"iteration_{iteration}"
+                    source_ply = iteration_dir / "point_cloud.ply"
+                    shadow_ply = iteration_dir / "point_cloud_shadow.ply"
+                    try:
+                        shadow_count, total_count = add_shadow_gaussians_to_ply(
+                            source_ply,
+                            shadow_ply,
+                            ground_axis=dataset.shadow_axis,
+                        )
+                        print(
+                            "[shadow-gaussians] Iteration {}: appended {} shadow points (total {}). Output: {}".format(
+                                iteration, shadow_count, total_count, shadow_ply
+                            )
+                        )
+                    except Exception as exc:
+                        print(f"[shadow-gaussians] Failed to generate shadow splats: {exc}")
 
             # Densification
             if iteration < opt.densify_until_iter:

@@ -51,6 +51,8 @@ class ModelParams(ParamGroup):
         self._model_path = ""
         self._images = "images"
         self.masks = ""
+        self.shadow = False
+        self.shadow_axis = "auto"
         self._depths = ""
         self._resolution = -1
         self._white_background = False
