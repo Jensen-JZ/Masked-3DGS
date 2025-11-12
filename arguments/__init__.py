@@ -51,6 +51,8 @@ class ModelParams(ParamGroup):
         self._model_path = ""
         self._images = "images"
         self.masks = ""
+        self.shadow = False
+        self.shadow_axis = "auto"
         self._depths = ""
         self._resolution = -1
         self._white_background = False
@@ -91,7 +93,7 @@ class OptimizationParams(ParamGroup):
         self.exposure_lr_delay_mult = 0.0
         self.percent_dense = 0.01
         self.lambda_dssim = 0.2
-        self.lambda_alpha = 0.0
+        self.lambda_mask = 0.0
         self.densification_interval = 100
         self.opacity_reset_interval = 3000
         self.densify_from_iter = 500

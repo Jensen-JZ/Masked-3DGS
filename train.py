@@ -11,6 +11,7 @@
 
 import os
 import torch
+from pathlib import Path
 from random import randint
 from utils.loss_utils import l1_loss, ssim
 from gaussian_renderer import render, network_gui
@@ -22,6 +23,7 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+from utils.add_shadow_gaussians import add_shadow_gaussians_to_ply
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -122,9 +124,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         masked_gt_image = gt_image * mask if mask is not None else gt_image
 
         loss = torch.zeros([], device=image.device)
-        if mask is not None and opt.lambda_alpha > 0:
-            alpha_loss = torch.nn.functional.mse_loss(rendered_alpha, mask)
-            loss = loss + opt.lambda_alpha * alpha_loss
+        if mask is not None and opt.lambda_mask > 0:
+            inside_mask = mask
+            outside_mask = (1.0 - mask).clamp(min=0.0, max=1.0)
+            bg_target = bg.view(-1, 1, 1) if bg.ndim == 1 else bg
+
+            inside_alpha_loss = torch.abs((rendered_alpha - 1.0) * inside_mask).mean()
+            outside_alpha_loss = torch.abs(rendered_alpha * outside_mask).mean()
+            outside_rgb_loss = torch.abs((image - bg_target) * outside_mask).mean()
+
+            mask_regularizer = opt.lambda_mask * (inside_alpha_loss + outside_alpha_loss + outside_rgb_loss)
+            loss = loss + mask_regularizer
 
         Ll1 = l1_loss(masked_image, masked_gt_image)
         if FUSED_SSIM_AVAILABLE:
@@ -138,11 +148,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # Depth regularization
         Ll1depth_pure = 0.0
         if depth_l1_weight(iteration) > 0 and viewpoint_cam.depth_reliable:
-            invDepth = render_pkg["depth"]
+            invDepth = render_pkg["depth"]  # Maybe delete later
+            # render_depth = render_pkg["depth"]
+            # if render_depth.ndim == 2:
+            #     render_depth = render_depth.unsqueeze(0)
+
+            # inv_depth = torch.zeros_like(render_depth)
+            # valid_depth = render_depth > 1e-6
+            # inv_depth[valid_depth] = torch.reciprocal(torch.clamp(render_depth[valid_depth], min=1e-6))
+
             mono_invdepth = viewpoint_cam.invdepthmap.cuda()
             depth_mask = viewpoint_cam.depth_mask.cuda()
 
-            Ll1depth_pure = torch.abs((invDepth  - mono_invdepth) * depth_mask).mean()
+            Ll1depth_pure = torch.abs((invDepth - mono_invdepth) * depth_mask).mean()
             Ll1depth = depth_l1_weight(iteration) * Ll1depth_pure 
             loss += Ll1depth
             Ll1depth = Ll1depth.item()
@@ -169,6 +187,23 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
+                if dataset.shadow:
+                    iteration_dir = Path(scene.model_path) / "point_cloud" / f"iteration_{iteration}"
+                    source_ply = iteration_dir / "point_cloud.ply"
+                    shadow_ply = iteration_dir / "point_cloud_shadow.ply"
+                    try:
+                        shadow_count, total_count = add_shadow_gaussians_to_ply(
+                            source_ply,
+                            shadow_ply,
+                            ground_axis=dataset.shadow_axis,
+                        )
+                        print(
+                            "[shadow-gaussians] Iteration {}: appended {} shadow points (total {}). Output: {}".format(
+                                iteration, shadow_count, total_count, shadow_ply
+                            )
+                        )
+                    except Exception as exc:
+                        print(f"[shadow-gaussians] Failed to generate shadow splats: {exc}")
 
             # Densification
             if iteration < opt.densify_until_iter:
