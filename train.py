@@ -124,18 +124,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         masked_gt_image = gt_image * mask if mask is not None else gt_image
 
         loss = torch.zeros([], device=image.device)
-        if mask is not None and opt.lambda_alpha > 0:
-            alpha_loss = torch.nn.functional.mse_loss(rendered_alpha, mask)
-            loss = loss + opt.lambda_alpha * alpha_loss
-
-        # Outside mask loss
-        if mask is not None and opt.lambda_mask_outside > 0:
+        if mask is not None and opt.lambda_mask > 0:
+            inside_mask = mask
             outside_mask = (1.0 - mask).clamp(min=0.0, max=1.0)
             bg_target = bg.view(-1, 1, 1) if bg.ndim == 1 else bg
-            outside_rgb = torch.abs((image - bg_target) * outside_mask).mean()
-            outside_alpha = torch.abs(rendered_alpha * outside_mask).mean()
-            outside_penalty = opt.lambda_mask_outside * (outside_rgb + outside_alpha)
-            loss = loss + outside_penalty
+
+            inside_alpha_loss = torch.abs((rendered_alpha - 1.0) * inside_mask).mean()
+            outside_alpha_loss = torch.abs(rendered_alpha * outside_mask).mean()
+            outside_rgb_loss = torch.abs((image - bg_target) * outside_mask).mean()
+
+            mask_regularizer = opt.lambda_mask * (inside_alpha_loss + outside_alpha_loss + outside_rgb_loss)
+            loss = loss + mask_regularizer
 
         Ll1 = l1_loss(masked_image, masked_gt_image)
         if FUSED_SSIM_AVAILABLE:

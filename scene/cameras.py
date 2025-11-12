@@ -60,6 +60,7 @@ class Camera(nn.Module):
                 self.alpha_mask = torch.ones_like(resized_image_rgb[0:1, ...].to(self.data_device))
 
         self.alpha_mask = self.alpha_mask.clamp(0.0, 1.0)
+        # self.alpha_mask = (self.alpha_mask >= 0.5).float()
 
         if train_test_exp and is_test_view:
             if is_test_dataset:
