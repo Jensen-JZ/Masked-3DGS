@@ -8,7 +8,7 @@ import shutil
 import struct
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, Tuple
+from typing import Dict
 
 import numpy as np
 
@@ -106,6 +106,7 @@ def read_images_binary(path: Path) -> Dict[int, Image]:
     images: Dict[int, Image] = {}
     with path.open("rb") as fid:
         num_images = struct.unpack("<Q", fid.read(8))[0]
+
         for _ in range(num_images):
             header = struct.unpack("<i7di", fid.read(4 + 8 * 7 + 4))
             image_id = header[0]
@@ -191,6 +192,7 @@ def write_points3d_binary(points: Dict[int, Point3D], path: Path) -> None:
 
 
 def qvec2rotmat(qvec: np.ndarray) -> np.ndarray:
+
     w, x, y, z = qvec
     return np.array(
         [
@@ -200,7 +202,6 @@ def qvec2rotmat(qvec: np.ndarray) -> np.ndarray:
         ],
         dtype=np.float64,
     )
-
 
 def rotmat2qvec(R: np.ndarray) -> np.ndarray:
     """Convert a world-to-camera rotation matrix to a (w, x, y, z) quaternion."""
@@ -252,6 +253,16 @@ def project_to_plane(vec: np.ndarray, normal: np.ndarray) -> np.ndarray:
 
 
 
+def _collect_point_samples(points: Dict[int, Point3D], max_points: int = 200000) -> np.ndarray:
+    if not points:
+        return np.empty((0, 3), dtype=np.float64)
+    xyz_stack = np.stack([pt.xyz for pt in points.values()], axis=0)
+    if xyz_stack.shape[0] <= max_points:
+        return xyz_stack
+    idx = np.linspace(0, xyz_stack.shape[0] - 1, max_points, dtype=np.int64)
+    return xyz_stack[idx]
+
+
 def compute_alignment(points: Dict[int, Point3D], images: Dict[int, Image]) -> np.ndarray:
     """Estimate a global rotation that aligns the scene with canonical XYZ axes."""
 
@@ -270,53 +281,81 @@ def compute_alignment(points: Dict[int, Point3D], images: Dict[int, Image]) -> n
 
     centers = np.stack(centers, axis=0)
     centers_mean = centers.mean(axis=0)
-    centers -= centers_mean
+    centers_centered = centers - centers_mean
 
-    # 对相机中心做 PCA，获取三个互相正交的主轴
-    cov_centers = np.cov(centers.T)
+    # 对相机中心做 PCA，最小方差方向往往对应竖直
+    cov_centers = np.cov(centers_centered.T)
     eigvals, eigvecs = np.linalg.eigh(cov_centers)
     order = np.argsort(eigvals)[::-1]
-    x_axis = eigvecs[:, order[0]].copy()
-    y_axis = eigvecs[:, order[1]].copy()
-    z_axis = eigvecs[:, order[2]].copy()  # 最小方差方向 ≈ 垂直
+    center_primary_candidate = eigvecs[:, order[0]]
+    center_secondary_candidate = eigvecs[:, order[1]]
+    z_axis = eigvecs[:, order[2]].copy()
 
-    # 点云协助判断符号
-    major_points = None
+    # 点云 PCA 进一步提供车身长轴/法向信息
+    xyz_stack = _collect_point_samples(points)
     normal_points = None
-    if points:
-        xyz_stack = np.stack([pt.xyz for pt in points.values()], axis=0)
-        if xyz_stack.shape[0] > 200000:
-            idx = np.linspace(0, xyz_stack.shape[0] - 1, 200000, dtype=np.int64)
-            xyz_stack = xyz_stack[idx]
+    point_primary_candidate = None
+    point_secondary_candidate = None
+    if xyz_stack.size:
         xyz_centered = xyz_stack - xyz_stack.mean(axis=0)
         cov_xyz = np.cov(xyz_centered.T)
         eigvals_p, eigvecs_p = np.linalg.eigh(cov_xyz)
         order_p = np.argsort(eigvals_p)
-        major_points = eigvecs_p[:, order_p[-1]]
         normal_points = eigvecs_p[:, order_p[0]]
+        point_primary_candidate = eigvecs_p[:, order_p[-1]]
+        point_secondary_candidate = eigvecs_p[:, order_p[-2]]
 
     up_mean = np.mean(up_vectors, axis=0)
+    forward_sum = np.sum([project_to_plane(vec, z_axis) for vec in forward_vectors], axis=0)
     if normal_points is not None and np.dot(normal_points, z_axis) < 0:
         z_axis = -z_axis
     if np.linalg.norm(up_mean) > 1e-6 and np.dot(up_mean, z_axis) < 0:
         z_axis = -z_axis
     if z_axis[2] < 0:
         z_axis = -z_axis
+    z_axis = normalize(z_axis)
 
-    # x 轴朝向：按点云主轴、相机平均前向或世界 X 选择符号
-    if major_points is not None and np.dot(major_points, x_axis) < 0:
-        x_axis = -x_axis
-    forward_mean = np.mean(forward_vectors, axis=0)
-    if np.linalg.norm(forward_mean) > 1e-6 and np.dot(forward_mean, x_axis) < 0:
-        x_axis = -x_axis
-    if np.dot(x_axis, np.array([1.0, 0.0, 0.0])) < 0:
-        x_axis = -x_axis
+    # 优先使用点云水平 PCA 获取车身长轴
+    x_axis = np.zeros(3, dtype=np.float64)
+    y_hint = np.zeros(3, dtype=np.float64)
 
-    # y 轴符号：优先保持与右手坐标系一致
+    if point_primary_candidate is not None:
+        primary = project_to_plane(point_primary_candidate, z_axis)
+        if np.linalg.norm(primary) > 1e-6:
+            x_axis = normalize(primary)
+            if point_secondary_candidate is not None:
+                y_hint = project_to_plane(point_secondary_candidate, z_axis)
+
+    if np.linalg.norm(x_axis) < 1e-6:
+        primary_centers = project_to_plane(center_primary_candidate, z_axis)
+        if np.linalg.norm(primary_centers) > 1e-6:
+            x_axis = normalize(primary_centers)
+            y_hint = project_to_plane(center_secondary_candidate, z_axis)
+
+    if np.linalg.norm(x_axis) < 1e-6:
+        fallback = project_to_plane(np.array([1.0, 0.0, 0.0]), z_axis)
+        if np.linalg.norm(fallback) < 1e-6:
+            fallback = project_to_plane(np.array([0.0, 1.0, 0.0]), z_axis)
+        x_axis = normalize(fallback)
+
+    # 使用相机前向与点云长轴决定正方向
+    if np.linalg.norm(forward_sum) > 1e-6 and np.dot(forward_sum, x_axis) > 0:
+        x_axis = -x_axis
+    if point_primary_candidate is not None:
+        primary_dir = project_to_plane(point_primary_candidate, z_axis)
+        if np.linalg.norm(primary_dir) > 1e-6 and np.dot(primary_dir, x_axis) < 0:
+            x_axis = -x_axis
+
+    y_axis = np.cross(z_axis, x_axis)
+    if np.linalg.norm(y_axis) < 1e-6 and np.linalg.norm(y_hint) > 1e-6:
+        y_axis = np.cross(z_axis, normalize(y_hint))
+    if np.linalg.norm(y_axis) < 1e-6:
+        y_axis = np.cross(z_axis, x_axis)
+    y_axis = normalize(y_axis)
     if np.dot(np.cross(z_axis, x_axis), y_axis) < 0:
         y_axis = -y_axis
 
-    R_align = np.stack([normalize(x_axis), normalize(y_axis), normalize(z_axis)], axis=0)
+    R_align = np.stack([normalize(x_axis), y_axis, z_axis], axis=0)
     if np.linalg.det(R_align) < 0:
         R_align[1] *= -1.0
     return R_align
