@@ -57,9 +57,30 @@ A standard file structure should look like this:
 
 ### 4. Run Training
 Start the training process by pointing to your dataset and the newly created masks directory. Adjust `--lambda_mask` as needed.
+
+#### Experimental: Vehicle Posture Optimization
+
+Masked-3DGS now supports vehicle posture optimization via the `--reorient_colmap` argument. This feature aligns all vehicles in your dataset to a canonical vehicle coordinate system (+Z up, +X forward), making downstream analysis and visualization more consistent.
+
+**Usage Example:**
 ```bash
-python train.py -s <path_to_colmap_dataset> --masks <path_to_mask_directory> --lambda_mask 0.1
+python train.py -s <path_to_colmap_dataset> --masks <path_to_mask_directory> --lambda_mask 0.1 --reorient_colmap
 ```
+
+When enabled, the system automatically backs up the original `sparse` directory to `sparse_original`, then generates a new, posture-optimized `sparse` directory. All vehicles will be rotated to a unified coordinate frame.
+
+**How It Works:**
+- We use principal component analysis (PCA) on both camera poses and point cloud distribution to infer the three main axes:
+    - **+Z axis**: Always points upward (roof direction), determined by camera and point cloud vertical distribution.
+    - **+X axis**: Points forward along the vehicle, inferred from the longest axis of the point cloud and camera forward vectors.
+    - **+Y axis**: Determined by the right-hand rule, ensuring orthogonality.
+- The rotation matrix is saved to `alignment_matrix.txt` for reference and further analysis.
+
+**Notes:**
+- This is an experimental feature and currently supports only certain scenarios. Future versions may switch to a rasterizer engine with native posture optimization support.
+- If your rasterizer supports direct coordinate transformation, more flexible posture correction will be possible.
+
+To disable posture optimization, simply omit the `--reorient_colmap` argument.
 
 ---
 
@@ -88,6 +109,13 @@ python train.py -s <path_to_colmap_dataset> --masks <path_to_mask_directory> --l
     -   **Low Values (e.g., 0.01 - 0.1)**: Offers a mild constraint, ideal for preserving soft edges or semi-transparent details. May not be sufficient to remove all artifacts outside the mask.
     -   **Medium Values (e.g., 0.1 - 1.0)**: Strikes a good balance between mask fidelity and reconstruction quality. This range is effective at eliminating most external noise while maintaining sharp boundaries. A starting value of `0.1` is recommended.
     -   **High Values (e.g., > 1.0)**: Enforces a strict constraint, aggressively confining the reconstruction to the mask. Can sometimes result in overly sharp or artificial-looking edges.
+
+
+### `--reorient_colmap` (Experimental)
+-   **Usage**: `--reorient_colmap`
+-   **Description**: When enabled, the system will automatically rotate the COLMAP sparse model to a canonical vehicle coordinate system (+Z up, +X forward), and back up the original data. This is useful for vehicle datasets where posture unification is required.
+-   **Principle**: The axes are inferred automatically using principal component analysis (PCA) on both camera poses and point cloud distribution.
+-   **Note**: This is an experimental feature. In future versions, posture optimization may be natively supported by switching to a rasterizer engine that allows direct coordinate transformation, enabling more flexible and robust posture correction.
 
 ---
 
@@ -166,9 +194,30 @@ conda activate masked_gs
 
 ### 4. 运行训练
 启动训练时，请指定您的数据集路径和新建的蒙版目录路径，并根据需要调整 `--lambda_mask` 的值。
+
+#### 实验性：车辆姿态优化
+
+Masked-3DGS 现已支持通过 `--reorient_colmap` 参数对 COLMAP 输出的稀疏模型进行**车身姿态优化**，可将车辆统一对齐到标准车体坐标系（+Z 向上，+X 向前）。
+
+**用法示例：**
 ```bash
-python train.py -s <COLMAP 数据集路径> --masks <蒙版目录路径> --lambda_mask 0.1
+python train.py -s <COLMAP 数据集路径> --masks <蒙版目录路径> --lambda_mask 0.1 --reorient_colmap
 ```
+
+启用该参数后，系统会自动将原始 `sparse` 目录备份为 `sparse_original`，并生成一个经过旋转优化的新 `sparse`，所有车辆都将对齐到统一的坐标系。
+
+**原理简介：**
+- 我们通过主成分分析（PCA）结合相机姿态和点云分布，自动推断车体的三个主轴：
+    - **+Z 轴**：始终指向竖直向上（车顶方向），通过相机分布和点云法向自动确定。
+    - **+X 轴**：指向车辆前方，结合点云长轴和相机前向自动推断。
+    - **+Y 轴**：由右手坐标系自动确定，保证三轴正交。
+- 旋转矩阵会被保存到 `alignment_matrix.txt`，便于后续分析。
+
+**注意事项：**
+- 该功能为实验性，当前仅支持部分场景，未来可能会更换栅格化引擎以原生支持姿态优化。
+- 若后续栅格化器支持直接指定坐标变换，则可实现更灵活的姿态校正。
+
+如需禁用姿态优化，只需不加 `--reorient_colmap` 参数即可。
 
 ---
 
@@ -197,6 +246,12 @@ python train.py -s <COLMAP 数据集路径> --masks <蒙版目录路径> --lambd
     -   **较低的值 (例如 0.01 - 0.1)**: 提供一个温和的约束，非常适合保留柔和的边缘或半透明细节。可能不足以移除蒙版外的所有伪影。
     -   **中等的值 (例如 0.1 - 1.0)**: 在蒙版保真度和重建质量之间取得了良好的平衡。这个范围能有效消除大部分外部噪声，同时保持清晰的边界。建议从 `0.1` 开始。
     -   **较高的的值 (例如 > 1.0)**: 强制执行严格的约束，积极地将重建限制在蒙版内。有时可能导致边缘过于锐利或看起来不自然。
+
+### `--reorient_colmap` (实验性)
+-   **用法**: `--reorient_colmap`
+-   **说明**: 启用后，系统会自动将 COLMAP 输出的稀疏模型旋转到标准车体坐标系（+Z 向上，+X 向前），并备份原始数据。适用于车辆等需要统一姿态的场景。
+-   **原理**: 结合相机分布和点云主成分分析（PCA），自动推断三轴方向。
+-   **注意**: 当前为实验性功能，未来可能会通过更换栅格化引擎实现更灵活的姿态优化。
 
 ---
 

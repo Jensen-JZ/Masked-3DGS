@@ -269,7 +269,7 @@ def compute_alignment(points: Dict[int, Point3D], images: Dict[int, Image]) -> n
     if len(images) < 3:
         raise ValueError("Need at least three images to estimate alignment")
 
-    # 从相机姿态提取方向与中心
+    # Extract viewing directions and camera centers from poses
     forward_vectors = []
     up_vectors = []
     centers = []
@@ -283,7 +283,7 @@ def compute_alignment(points: Dict[int, Point3D], images: Dict[int, Image]) -> n
     centers_mean = centers.mean(axis=0)
     centers_centered = centers - centers_mean
 
-    # 对相机中心做 PCA，最小方差方向往往对应竖直
+    # Perform PCA on camera centers; the smallest variance direction is usually vertical
     cov_centers = np.cov(centers_centered.T)
     eigvals, eigvecs = np.linalg.eigh(cov_centers)
     order = np.argsort(eigvals)[::-1]
@@ -291,7 +291,7 @@ def compute_alignment(points: Dict[int, Point3D], images: Dict[int, Image]) -> n
     center_secondary_candidate = eigvecs[:, order[1]]
     z_axis = eigvecs[:, order[2]].copy()
 
-    # 点云 PCA 进一步提供车身长轴/法向信息
+    # Point cloud PCA further provides hints about the vehicle's longitudinal axis and normal
     xyz_stack = _collect_point_samples(points)
     normal_points = None
     point_primary_candidate = None
@@ -315,7 +315,7 @@ def compute_alignment(points: Dict[int, Point3D], images: Dict[int, Image]) -> n
         z_axis = -z_axis
     z_axis = normalize(z_axis)
 
-    # 优先使用点云水平 PCA 获取车身长轴
+    # Prefer the horizontal point-cloud PCA result to obtain the vehicle's longitudinal axis
     x_axis = np.zeros(3, dtype=np.float64)
     y_hint = np.zeros(3, dtype=np.float64)
 
@@ -338,7 +338,7 @@ def compute_alignment(points: Dict[int, Point3D], images: Dict[int, Image]) -> n
             fallback = project_to_plane(np.array([0.0, 1.0, 0.0]), z_axis)
         x_axis = normalize(fallback)
 
-    # 使用相机前向与点云长轴决定正方向
+    # Use camera forward vectors and the point-cloud axis to determine the positive direction
     if np.linalg.norm(forward_sum) > 1e-6 and np.dot(forward_sum, x_axis) > 0:
         x_axis = -x_axis
     if point_primary_candidate is not None:
@@ -383,7 +383,7 @@ def rotate_images(images: Dict[int, Image], R_align: np.ndarray) -> Dict[int, Im
         R_new = R_old @ R_align.T
         q_new = rotmat2qvec(R_new)
 
-        # 先将平移转换为世界系相机中心，再应用全局旋转，最后回写新的平移
+        # Convert translation to a world-space camera center, apply the global rotation, then convert back
         C_old = -R_old.T @ image.tvec
         C_new = R_align @ C_old
         t_new = -R_new @ C_new
@@ -407,10 +407,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    args = parse_args()
-    input_dir: Path = args.input
-    output_dir: Path = args.output
+def reorient_sparse_model(input_dir: Path, output_dir: Path, *, copy_cameras: bool = False) -> np.ndarray:
+    """Rotate a COLMAP sparse model directory and write results to output_dir."""
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     cameras = read_cameras_binary(input_dir / "cameras.bin")
@@ -421,13 +420,22 @@ def main() -> None:
     rotated_points = rotate_points(points, R_align)
     rotated_images = rotate_images(images, R_align)
 
-    if args.copy_cameras:
+    if copy_cameras:
         shutil.copy2(input_dir / "cameras.bin", output_dir / "cameras.bin")
     else:
         write_cameras_binary(cameras, output_dir / "cameras.bin")
     write_images_binary(rotated_images, output_dir / "images.bin")
     write_points3d_binary(rotated_points, output_dir / "points3D.bin")
     save_alignment(R_align, output_dir)
+    return R_align
+
+
+def main() -> None:
+    args = parse_args()
+    input_dir: Path = args.input
+    output_dir: Path = args.output
+
+    R_align = reorient_sparse_model(input_dir, output_dir, copy_cameras=args.copy_cameras)
 
     np.set_printoptions(precision=6, suppress=True)
     print("Alignment rotation (rows = new axes in old coordinates):")
