@@ -10,6 +10,7 @@
 #
 
 import os
+import shutil
 import torch
 from pathlib import Path
 from random import randint
@@ -24,6 +25,7 @@ from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
 from utils.add_shadow_gaussians import add_shadow_gaussians_to_ply
+from tools.reorient_colmap import reorient_sparse_model
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -234,6 +236,55 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
 
+
+def _discover_colmap_sets(root: Path):
+    if (root / "cameras.bin").exists() and (root / "images.bin").exists() and (root / "points3D.bin").exists():
+        return [(root, Path("."))]
+    subsets = []
+    for child in sorted(root.iterdir()):
+        if child.is_dir() and (child / "cameras.bin").exists():
+            subsets.append((child, Path(child.name)))
+    return subsets
+
+
+def maybe_reorient_sparse(args):
+    if not getattr(args, "reorient_colmap", False):
+        return
+
+    source_path = Path(args.source_path).resolve()
+    sparse_dir = source_path / "sparse"
+    sparse_original_dir = source_path / "sparse_original"
+
+    if not sparse_dir.exists() and not sparse_original_dir.exists():
+        print(f"[reorient-colmap] Skipping: no sparse directory found under {source_path}")
+        return
+
+    if sparse_dir.exists() and not sparse_original_dir.exists():
+        print(f"[reorient-colmap] Backing up {sparse_dir} to {sparse_original_dir}")
+        sparse_dir.rename(sparse_original_dir)
+    elif sparse_dir.exists() and sparse_original_dir.exists():
+        print(f"[reorient-colmap] Clearing existing reoriented output at {sparse_dir}")
+        shutil.rmtree(sparse_dir)
+    elif not sparse_dir.exists() and sparse_original_dir.exists():
+        print(f"[reorient-colmap] Using existing backup at {sparse_original_dir}")
+
+    if not sparse_original_dir.exists():
+        print(f"[reorient-colmap] Backup directory missing after preparation: {sparse_original_dir}")
+        return
+
+    sparse_dir.mkdir(parents=True, exist_ok=True)
+
+    tasks = _discover_colmap_sets(sparse_original_dir)
+    if not tasks:
+        raise FileNotFoundError(f"[reorient-colmap] No COLMAP models found inside {sparse_original_dir}")
+
+    for input_dir, relative_output in tasks:
+        output_dir = sparse_dir / relative_output
+        print(f"[reorient-colmap] Reorienting {input_dir} -> {output_dir}")
+        reorient_sparse_model(input_dir, output_dir, copy_cameras=False)
+
+    print(f"[reorient-colmap] Finished. Original sparse backup is at {sparse_original_dir}")
+
 def prepare_output_and_logger(args):    
     if not args.model_path:
         if os.getenv('OAR_JOB_ID'):
@@ -312,8 +363,11 @@ if __name__ == "__main__":
     parser.add_argument('--disable_viewer', action='store_true', default=False)
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--start_checkpoint", type=str, default = None)
+    parser.add_argument("--reorient_colmap", action="store_true", help="Rotate COLMAP sparse model before training")
     args = parser.parse_args(sys.argv[1:])
     args.save_iterations.append(args.iterations)
+
+    maybe_reorient_sparse(args)
     
     print("Optimizing " + args.model_path)
 

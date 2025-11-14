@@ -407,10 +407,9 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def main() -> None:
-    args = parse_args()
-    input_dir: Path = args.input
-    output_dir: Path = args.output
+def reorient_sparse_model(input_dir: Path, output_dir: Path, *, copy_cameras: bool = False) -> np.ndarray:
+    """Rotate a COLMAP sparse model directory and write results to output_dir."""
+
     output_dir.mkdir(parents=True, exist_ok=True)
 
     cameras = read_cameras_binary(input_dir / "cameras.bin")
@@ -421,13 +420,22 @@ def main() -> None:
     rotated_points = rotate_points(points, R_align)
     rotated_images = rotate_images(images, R_align)
 
-    if args.copy_cameras:
+    if copy_cameras:
         shutil.copy2(input_dir / "cameras.bin", output_dir / "cameras.bin")
     else:
         write_cameras_binary(cameras, output_dir / "cameras.bin")
     write_images_binary(rotated_images, output_dir / "images.bin")
     write_points3d_binary(rotated_points, output_dir / "points3D.bin")
     save_alignment(R_align, output_dir)
+    return R_align
+
+
+def main() -> None:
+    args = parse_args()
+    input_dir: Path = args.input
+    output_dir: Path = args.output
+
+    R_align = reorient_sparse_model(input_dir, output_dir, copy_cameras=args.copy_cameras)
 
     np.set_printoptions(precision=6, suppress=True)
     print("Alignment rotation (rows = new axes in old coordinates):")
