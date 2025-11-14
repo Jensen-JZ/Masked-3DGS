@@ -296,27 +296,73 @@ def compute_alignment(points: Dict[int, Point3D], images: Dict[int, Image]) -> n
         normal_points = eigvecs_p[:, order_p[0]]
 
     up_mean = np.mean(up_vectors, axis=0)
-    if normal_points is not None and np.dot(normal_points, z_axis) < 0:
-        z_axis = -z_axis
-    if np.linalg.norm(up_mean) > 1e-6 and np.dot(up_mean, z_axis) < 0:
+    forward_mean = np.mean(forward_vectors, axis=0)
+
+    def add_vertical_candidate(candidates: list[np.ndarray], vec: np.ndarray) -> None:
+        if np.linalg.norm(vec) < 1e-6:
+            return
+        candidate = normalize(vec)
+        if candidates:
+            ref = candidates[0]
+            if np.dot(candidate, ref) < 0:
+                candidate = -candidate
+        elif np.linalg.norm(up_mean) > 1e-6 and np.dot(candidate, up_mean) < 0:
+            candidate = -candidate
+        elif candidate[2] < 0:
+            candidate = -candidate
+        candidates.append(candidate)
+
+    z_candidates: list[np.ndarray] = []
+    add_vertical_candidate(z_candidates, up_mean)
+    if normal_points is not None:
+        add_vertical_candidate(z_candidates, normal_points)
+    add_vertical_candidate(z_candidates, z_axis)
+
+    if not z_candidates:
+        raise ValueError("Failed to compute vertical axis")
+    z_axis = np.mean(z_candidates, axis=0)
+    if np.linalg.norm(z_axis) < 1e-6:
+        z_axis = z_candidates[0]
+    z_axis = normalize(z_axis)
+    if np.linalg.norm(up_mean) > 1e-6 and np.dot(z_axis, up_mean) < 0:
         z_axis = -z_axis
     if z_axis[2] < 0:
         z_axis = -z_axis
 
-    # x 轴朝向：按点云主轴、相机平均前向或世界 X 选择符号
+    # x 轴朝向：优先使用相机平均前向在水平面的投影
+    forward_proj = project_to_plane(forward_mean, z_axis)
+    if np.linalg.norm(forward_proj) > 1e-6:
+        x_axis = normalize(forward_proj)
+    else:
+        projected_pca_x = project_to_plane(eigvecs[:, order[0]], z_axis)
+        if np.linalg.norm(projected_pca_x) < 1e-6:
+            raise ValueError("Failed to compute a stable forward axis")
+        x_axis = normalize(projected_pca_x)
+
+    # 结合点云主轴、相机平均前向或世界 X 选择符号
     if major_points is not None and np.dot(major_points, x_axis) < 0:
         x_axis = -x_axis
-    forward_mean = np.mean(forward_vectors, axis=0)
     if np.linalg.norm(forward_mean) > 1e-6 and np.dot(forward_mean, x_axis) < 0:
         x_axis = -x_axis
     if np.dot(x_axis, np.array([1.0, 0.0, 0.0])) < 0:
         x_axis = -x_axis
 
-    # y 轴符号：优先保持与右手坐标系一致
+    x_axis = project_to_plane(x_axis, z_axis)
+    if np.linalg.norm(x_axis) < 1e-6:
+        raise ValueError("Failed to keep axes orthogonal")
+    x_axis = normalize(x_axis)
+
+    # y 轴：确保与新的 X、Z 构成右手坐标系
+    y_axis = np.cross(z_axis, x_axis)
+    if np.linalg.norm(y_axis) < 1e-6:
+        y_axis = project_to_plane(eigvecs[:, order[1]], z_axis)
+    if np.linalg.norm(y_axis) < 1e-6:
+        raise ValueError("Failed to compute a stable horizontal axis")
     if np.dot(np.cross(z_axis, x_axis), y_axis) < 0:
         y_axis = -y_axis
+    y_axis = normalize(y_axis)
 
-    R_align = np.stack([normalize(x_axis), normalize(y_axis), normalize(z_axis)], axis=0)
+    R_align = np.stack([x_axis, y_axis, z_axis], axis=0)
     if np.linalg.det(R_align) < 0:
         R_align[1] *= -1.0
     return R_align
