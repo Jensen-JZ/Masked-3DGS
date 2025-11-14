@@ -255,28 +255,28 @@ def maybe_reorient_sparse(args):
     sparse_dir = source_path / "sparse"
     sparse_original_dir = source_path / "sparse_original"
 
-    if not sparse_dir.exists() and not sparse_original_dir.exists():
-        print(f"[reorient-colmap] Skipping: no sparse directory found under {source_path}")
-        return
+    tasks = None
 
-    if sparse_dir.exists() and not sparse_original_dir.exists():
+    if sparse_original_dir.exists():
+        print(f"[reorient-colmap] Validating existing backup at {sparse_original_dir}")
+        tasks = _discover_colmap_sets(sparse_original_dir)
+        if not tasks:
+            print(f"[reorient-colmap] Found sparse_original but no valid COLMAP models inside {sparse_original_dir}, aborting reorientation")
+            return
+        if sparse_dir.exists():
+            print(f"[reorient-colmap] Removing current sparse directory {sparse_dir} before reorienting")
+            shutil.rmtree(sparse_dir)
+    else:
+        if not sparse_dir.exists():
+            print(f"[reorient-colmap] Skipping: no sparse directory found under {source_path}")
+            return
         print(f"[reorient-colmap] Backing up {sparse_dir} to {sparse_original_dir}")
         sparse_dir.rename(sparse_original_dir)
-    elif sparse_dir.exists() and sparse_original_dir.exists():
-        print(f"[reorient-colmap] Clearing existing reoriented output at {sparse_dir}")
-        shutil.rmtree(sparse_dir)
-    elif not sparse_dir.exists() and sparse_original_dir.exists():
-        print(f"[reorient-colmap] Using existing backup at {sparse_original_dir}")
-
-    if not sparse_original_dir.exists():
-        print(f"[reorient-colmap] Backup directory missing after preparation: {sparse_original_dir}")
-        return
+        tasks = _discover_colmap_sets(sparse_original_dir)
+        if not tasks:
+            raise FileNotFoundError(f"[reorient-colmap] No COLMAP models found inside freshly created backup {sparse_original_dir}")
 
     sparse_dir.mkdir(parents=True, exist_ok=True)
-
-    tasks = _discover_colmap_sets(sparse_original_dir)
-    if not tasks:
-        raise FileNotFoundError(f"[reorient-colmap] No COLMAP models found inside {sparse_original_dir}")
 
     for input_dir, relative_output in tasks:
         output_dir = sparse_dir / relative_output
@@ -324,17 +324,28 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                 l1_test = 0.0
                 psnr_test = 0.0
                 for idx, viewpoint in enumerate(config['cameras']):
-                    image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
+                    render_image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
+                    mask = viewpoint.alpha_mask
+                    if mask is not None:
+                        mask = mask.to(render_image.device, dtype=render_image.dtype)
                     if train_test_exp:
-                        image = image[..., image.shape[-1] // 2:]
+                        render_image = render_image[..., render_image.shape[-1] // 2:]
                         gt_image = gt_image[..., gt_image.shape[-1] // 2:]
+                        if mask is not None:
+                            mask = mask[..., mask.shape[-1] // 2:]
+                    if mask is not None:
+                        masked_render = render_image * mask
+                        masked_gt = gt_image * mask
+                    else:
+                        masked_render = render_image
+                        masked_gt = gt_image
                     if tb_writer and (idx < 5):
-                        tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), image[None], global_step=iteration)
+                        tb_writer.add_images(config['name'] + "_view_{}/render".format(viewpoint.image_name), render_image[None], global_step=iteration)
                         if iteration == testing_iterations[0]:
                             tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
-                    l1_test += l1_loss(image, gt_image).mean().double()
-                    psnr_test += psnr(image, gt_image).mean().double()
+                    l1_test += l1_loss(masked_render, masked_gt).mean().double()
+                    psnr_test += psnr(masked_render.unsqueeze(0), masked_gt.unsqueeze(0)).mean().double()
                 psnr_test /= len(config['cameras'])
                 l1_test /= len(config['cameras'])          
                 print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
