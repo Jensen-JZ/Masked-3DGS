@@ -8,7 +8,7 @@ import shutil
 import struct
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 
@@ -263,6 +263,37 @@ def _collect_point_samples(points: Dict[int, Point3D], max_points: int = 200000)
     return xyz_stack[idx]
 
 
+def _detect_tail_projection(
+    points: Dict[int, Point3D],
+    axis: np.ndarray,
+    center: np.ndarray,
+    *,
+    min_points: int = 10,  # minimum reliable samples before trusting the heuristic
+    min_redness: float = 15.0,  # how much R must exceed max(G,B) to qualify as a tail light
+) -> Tuple[Optional[float], int]:
+    """Return (median projection, count) of red tail-light points along axis."""
+
+    if not points or np.linalg.norm(axis) < 1e-9:
+        return None, 0
+
+    axis = normalize(axis)
+    center = np.asarray(center, dtype=np.float64)
+    projections: list[float] = []
+
+    for point in points.values():
+        r, g, b = point.rgb.astype(np.float32)
+        redness = r - max(g, b)
+        # Allow moderately bright red hues; thresholds are loose so orange LEDs still pass.
+        if r > 80 and g < 220 and b < 220 and redness > min_redness:
+            proj = float(np.dot(point.xyz - center, axis))
+            projections.append(proj)
+
+    if len(projections) < min_points:
+        return None, len(projections)
+
+    return float(np.median(projections)), len(projections)
+
+
 def compute_alignment(points: Dict[int, Point3D], images: Dict[int, Image]) -> np.ndarray:
     """Estimate a global rotation that aligns the scene with canonical XYZ axes."""
 
@@ -296,8 +327,10 @@ def compute_alignment(points: Dict[int, Point3D], images: Dict[int, Image]) -> n
     normal_points = None
     point_primary_candidate = None
     point_secondary_candidate = None
+    point_center = None
     if xyz_stack.size:
-        xyz_centered = xyz_stack - xyz_stack.mean(axis=0)
+        point_center = xyz_stack.mean(axis=0)
+        xyz_centered = xyz_stack - point_center
         cov_xyz = np.cov(xyz_centered.T)
         eigvals_p, eigvecs_p = np.linalg.eigh(cov_xyz)
         order_p = np.argsort(eigvals_p)
@@ -345,6 +378,25 @@ def compute_alignment(points: Dict[int, Point3D], images: Dict[int, Image]) -> n
         primary_dir = project_to_plane(point_primary_candidate, z_axis)
         if np.linalg.norm(primary_dir) > 1e-6 and np.dot(primary_dir, x_axis) < 0:
             x_axis = -x_axis
+
+    scene_center = point_center if point_center is not None else centers_mean
+    tail_proj, tail_count = _detect_tail_projection(points, x_axis, scene_center)
+    if tail_proj is None:
+        print(
+            f"[alignment] Tail-light heuristic skipped (red candidates={tail_count})."
+        )
+    else:
+        print(
+            f"[alignment] Tail-light median projection along +X: {tail_proj:.4f} "
+            f"(red candidates={tail_count})"
+        )
+        if tail_proj < 0:
+            x_axis = -x_axis
+            print(
+                "[alignment] Tail-light heuristic flipped x-axis so +X points toward vehicle front."
+            )
+        else:
+            print("[alignment] Tail-light heuristic kept current x-axis orientation.")
 
     y_axis = np.cross(z_axis, x_axis)
     if np.linalg.norm(y_axis) < 1e-6 and np.linalg.norm(y_hint) > 1e-6:

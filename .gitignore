@@ -8,3 +8,5 @@ tensorboard_3d
 screenshots
 TESTDATA
 output
+pcd_output
+batch_train.sh
