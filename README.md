@@ -1,5 +1,7 @@
 # Masked-3DGS: Selective 3D Scene Reconstruction with 2D Masks
 
+https://github.com/user-attachments/assets/0f0e7272-8ea5-4294-af24-117852a8133c
+
 This repository contains **Masked-3DGS**, an extension of the original **3D Gaussian Splatting** project. The core innovation of this work is the ability to perform **selective 3D scene reconstruction based on 2D masks**. This powerful feature allows the model to focus its attention and computational resources exclusively on user-defined regions of interest, effectively ignoring irrelevant parts of the scene.
 
 This is achieved through three key modifications to the original codebase:
@@ -141,6 +143,8 @@ This work is built upon the incredible research and open-source code of the orig
 <br>
 
 # Masked-3DGS: 基于 2D 蒙版的 3D 场景选择性重建
+
+https://github.com/user-attachments/assets/0f0e7272-8ea5-4294-af24-117852a8133c
 
 本代码库是 **Masked-3DGS**，一个对原始 **3D Gaussian Splatting** 项目的扩展。本工作的核心创新在于实现了**基于 2D 蒙版的选择性 3D 场景重建**。这一强大功能使得模型能够将其注意力和计算资源完全集中在用户定义的目标区域，从而高效地忽略场景中的无关部分。
 
